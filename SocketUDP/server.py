@@ -1,66 +1,55 @@
 import socket
-import struct
-import threading
+import os
 
-CHUNK_SIZE = 1024
-PORT = 8080
-SERVER_IP = "127.0.0.1"
-FILES_LIST = "C:/Users/ADMIN/Documents/GitHub/Socket_Project/SocketUDP/files.txt"  # Danh sách file có sẵn
+SERVER_HOST = "127.0.0.1"
+SERVER_PORT = 12345
+FILE_LIST_PATH = "C:/Users/ADMIN/Documents/GitHub/Socket_Project/SocketUDP/files.txt"
 
-def send_file_chunk(filename, client_address, server_socket):
-    try:
-        with open(filename, "rb") as file:
-            sequence_number = 0
-            while True:
-                chunk = file.read(CHUNK_SIZE)
-                if not chunk:
-                    break
+# Hàm đọc danh sách file từ file text
+def load_file_list():
+    files = {}
+    with open(FILE_LIST_PATH, "r") as f:
+        for line in f:
+            name, size = line.strip().split()
+            if "MB" in size:
+                files[name] = int(size.replace("MB", "")) * 1024 * 1024  # Chuyển MB sang byte
+            elif "GB" in size:
+                files[name] = int(size.replace("GB", "")) * 1024 * 1024 * 1024  # Chuyển GB sang byte
+    return files
 
-                # Đóng gói chunk với số thứ tự
-                packet = struct.pack("I", sequence_number) + chunk
+files = load_file_list()
 
-                while True:
-                    server_socket.sendto(packet, client_address)
+# Hàm xử lý yêu cầu từ client
+def handle_client(data, addr):
+    command = data.decode().split()
 
-                    # Chờ ACK
-                    try:
-                        server_socket.settimeout(2)
-                        ack_packet, _ = server_socket.recvfrom(1024)
-                        ack_number = struct.unpack("I", ack_packet)[0]
+    if command[0] == "LIST_FILES":
+        response = "\n".join([f"{name} {size // (1024 * 1024)}MB" for name, size in files.items()])
+        server_socket.sendto(response.encode(), addr)
+    
+    elif command[0] == "DOWNLOAD_REQUEST":
+        filename, offset, length = command[1], int(command[2]), int(command[3])
+        if filename in files:
+            try:
+                with open(filename, "rb") as f:
+                    f.seek(offset)
+                    data = f.read(length)
+                    server_socket.sendto(f"CHUNK_DATA {filename} {offset} ".encode() + data, addr)
+            except FileNotFoundError:
+                server_socket.sendto("ERROR: File not found".encode(), addr)
+        else:
+            server_socket.sendto("ERROR: File not found".encode(), addr)
 
-                        if ack_number == sequence_number:
-                            break
-                    except socket.timeout:
-                        continue
+# Khởi tạo server
+server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+server_socket.bind((SERVER_HOST, SERVER_PORT))
 
-                sequence_number += 1
-    except FileNotFoundError:
-        server_socket.sendto(b"ERROR: File not found!", client_address)
+print("Server is listening on port 12345...")
 
-def handle_request(data, client_address, server_socket):
-    request_type, *args = data.decode().split()
-
-    if request_type == "LIST":
-        # Gửi danh sách file về client
-        try:
-            with open(FILES_LIST, "r") as f:
-                files = f.read()
-            server_socket.sendto(files.encode(), client_address)
-        except FileNotFoundError:
-            server_socket.sendto(b"ERROR: No files available!", client_address)
-
-    elif request_type == "GET":
-        filename = args[0]
-        threading.Thread(target=send_file_chunk, args=(filename, client_address, server_socket)).start()
-
-def main():
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    server_socket.bind((SERVER_IP, PORT))
-    print("Server is running...")
-
-    while True:
-        data, client_address = server_socket.recvfrom(1024)
-        threading.Thread(target=handle_request, args=(data, client_address, server_socket)).start()
-
-if __name__ == "__main__":
-    main()
+# Chờ và nhận dữ liệu từ client
+while True:
+    data, addr = server_socket.recvfrom(1024)  # Nhận dữ liệu từ client
+    print(f"Received data from {addr}")
+    
+    # Xử lý yêu cầu của client (chỉ 1 client tại 1 thời điểm)
+    handle_client(data, addr)

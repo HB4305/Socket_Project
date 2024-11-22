@@ -1,69 +1,76 @@
 import socket
-import struct
+import threading
+import os
 import time
 
-CHUNK_SIZE = 1024
-PORT = 8080
-SERVER_IP = "127.0.0.1"
-INPUT_FILE = "C:/Users/ADMIN/Documents/GitHub/Socket_Project/SocketUDP/input.txt"
+SERVER_HOST = "127.0.0.1"
+SERVER_PORT = 12345
+CHUNK_SIZE = 1024 * 1024  # Mỗi chunk 1MB
 
-def get_server_files(client_socket):
-    client_socket.sendto(b"LIST", (SERVER_IP, PORT))
-    data, _ = client_socket.recvfrom(4096)
-    return data.decode().splitlines()
+# Hàm tải về từng phần của file
+def download_chunk(filename, offset, length, part_number):
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        # Gửi yêu cầu tải về file từ server
+        sock.sendto(f"DOWNLOAD_REQUEST {filename} {offset} {length}".encode(), (SERVER_HOST, SERVER_PORT))
+        
+        with open(f"{filename}.part{part_number}", "wb") as f:
+            total_received = 0  # Tổng số byte đã nhận
+            while total_received < length:  # Chỉ tiếp tục nếu còn byte cần nhận
+                remaining_bytes = length - total_received
+                data, _ = sock.recvfrom(min(CHUNK_SIZE, remaining_bytes))  # Nhận tối đa chunk size hoặc byte còn lại
+                if not data:  # Nếu không có dữ liệu nữa, dừng
+                    print(f"Error: No more data received for part {part_number} of {filename}")
+                    break
+                f.write(data)  # Ghi dữ liệu vào file
+                total_received += len(data)  # Cập nhật tổng số byte đã nhận
+                progress = total_received / length * 100  # Tính tiến độ
+                print(f"Downloading {filename} part {part_number} .... {progress:.2f}%")
 
-def download_file(client_socket, filename):
-    client_socket.sendto(f"GET {filename}".encode(), (SERVER_IP, PORT))
+# Hàm tải về file, chia thành các phần và tải song song
+def download_file(filename, file_size):
+    chunk_length = file_size // 4
+    threads = []
+    for part in range(4):
+        offset = part * chunk_length
+        length = chunk_length if part < 3 else file_size - offset
+        thread = threading.Thread(target=download_chunk, args=(filename, offset, length, part + 1))
+        thread.start()
+        threads.append(thread)
+    for t in threads:
+        t.join()
 
-    file_data = {}
-    expected_sequence = 0
+    # Ghép các file part thành file hoàn chỉnh
+    with open(filename, "wb") as final_file:
+        for part in range(1, 5):
+            with open(f"{filename}.part{part}", "rb") as f:
+                final_file.write(f.read())
+            os.remove(f"{filename}.part{part}")
 
-    print(f"Downloading file: {filename}")
 
+# Hàm giám sát input từ file và tải file
+def monitor_input():
+    processed_files = set()
     while True:
-        packet, _ = client_socket.recvfrom(CHUNK_SIZE + 4)
-        sequence_number = struct.unpack("I", packet[:4])[0]
-        chunk = packet[4:]
-
-        if sequence_number == expected_sequence:
-            file_data[sequence_number] = chunk
-            ack_packet = struct.pack("I", sequence_number)
-            client_socket.sendto(ack_packet, (SERVER_IP, PORT))
-            expected_sequence += 1
-
-        if len(chunk) < CHUNK_SIZE:
-            break
-
-    with open(filename, "wb") as f:
-        for i in range(len(file_data)):
-            f.write(file_data[i])
-
-    print(f"File {filename} downloaded successfully.")
-
-def main():
-    client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-    downloaded_files = set()
-
-    while True:
-        try:
-            # Đọc danh sách file từ server
-            server_files = get_server_files(client_socket)
-
-            # Đọc danh sách file từ input.txt
-            with open(INPUT_FILE, "r") as f:
-                input_files = [line.strip() for line in f.readlines()]
-
-            # Kiểm tra file nào cần tải
-            for file in input_files:
-                if file not in downloaded_files and file in server_files:
-                    download_file(client_socket, file)
-                    downloaded_files.add(file)
-
-            time.sleep(5)  # Chờ 5 giây trước khi kiểm tra lại
-        except FileNotFoundError:
-            print(f"File {INPUT_FILE} not found!")
-            time.sleep(5)
+        with open("C:/Users/ADMIN/Documents/GitHub/Socket_Project/SocketUDP/input.txt", "r") as f:
+            files_to_download = set(line.strip() for line in f if line.strip())
+        new_files = files_to_download - processed_files
+        for filename in new_files:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                # Gửi yêu cầu để nhận danh sách file từ server
+                sock.sendto("LIST_FILES".encode(), (SERVER_HOST, SERVER_PORT))
+                file_list, _ = sock.recvfrom(4096)  # Nhận dữ liệu danh sách file
+                file_list = file_list.decode().splitlines()
+                file_map = {line.split()[0]: int(line.split()[1].replace("MB", "")) * 1024 * 1024 for line in file_list}
+                
+                # Kiểm tra xem file có tồn tại trên server không
+                if filename in file_map:
+                    print(f"Starting download of {filename}")
+                    download_file(filename, file_map[filename])
+                    print(f"Completed download of {filename}")
+                else:
+                    print(f"File {filename} not found on server")
+            processed_files.add(filename)
+        time.sleep(5)
 
 if __name__ == "__main__":
-    main()
+    monitor_input()

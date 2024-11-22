@@ -1,3 +1,2 @@
-File6.zip 200MB
-File1.zip 5MB
+File1.zip
 
