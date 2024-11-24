@@ -4,7 +4,6 @@ import os
 
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 12345
-# Đường dẫn tới file chứa danh sách file và kích thước
 FILE_LIST_PATH = "files.txt"
 
 # Hàm đọc danh sách file từ file text
@@ -17,6 +16,9 @@ def load_file_list():
                 files[name] = int(size.replace("MB", "")) * 1024 * 1024  # Chuyển MB sang byte
             elif "GB" in size:
                 files[name] = int(size.replace("GB", "")) * 1024 * 1024 * 1024  # Chuyển GB sang byte
+            else:
+                # Nếu không có đơn vị, mặc định là byte
+                files[name] = int(size)
     return files
 
 files = load_file_list()
@@ -38,10 +40,12 @@ def handle_client(client_socket):
             elif command[0] == "DOWNLOAD_REQUEST":
                 filename, offset, length = command[1], int(command[2]), int(command[3])
                 if filename in files:
-                    with open(filename, "rb") as f:
+                    file_path = os.path.join("source", filename)
+                    with open(file_path, "rb") as f:
                         f.seek(offset)
                         data = f.read(length)
-                        client_socket.send(f"CHUNK_DATA {filename} {offset} ".encode() + data)
+                        # client_socket.send(f"CHUNK_DATA {filename} {offset} ".encode() + data)
+                        client_socket.send(data)
                 else:
                     client_socket.send("ERROR: File not found".encode())
     finally:
