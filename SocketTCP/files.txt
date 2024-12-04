@@ -1,5 +1,5 @@
 global_electricity_production_data.csv 5MB
-[PICK]xuantinhnguyen.jpg 2MB
+[PICK]xuantinhnguyen.jpg 3MB
 tk.txt 50B
 ttk.txt 50B
 File1.zip 5MB
