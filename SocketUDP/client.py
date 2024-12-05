@@ -1,71 +1,75 @@
+from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn
 import socket
 import threading
 import os
 import time
+import hashlib
 
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 12345
-CHUNK_SIZE = 4096  # Mỗi chunk 4096 byte
+CHUNK_SIZE = 4096 - 33  # Adjusted to account for hash size
 
 # Lưu trạng thái tiến trình tải của các phần
 progress_status = {}
 
-def download_chunk(filename, offset, length, part_number):
+def download_chunk(filename, offset, length, part_number, progress_tasks, progress):
     """Tải một phần (chunk) của file."""
-    global progress_status
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.sendto(f"DOWNLOAD_REQUEST {filename} {offset} {length}".encode(), (SERVER_HOST, SERVER_PORT))
 
     with open(f"{filename}.part{part_number}", "wb") as f:
         total_received = 0  # Tổng số byte đã nhận
         while True:
-            data, _ = sock.recvfrom(CHUNK_SIZE)  # Nhận 4096 byte
+            data, _ = sock.recvfrom(CHUNK_SIZE + 33)  # Nhận 4096 byte + 32 byte hash + 1 byte space
             if data == b"End":
                 break
-            for i in range(0, len(data), 64):  # Xử lý từng phần nhỏ 1024 byte
-                f.write(data[i:i+64])
-                total_received += len(data[i:i+64])
-                progress_status[part_number] = (total_received) / length * 100  # Cập nhật tiến trình
-
+            hash_value, chunk_data = data[:32], data[33:]
+            if hashlib.md5(chunk_data).hexdigest().encode() == hash_value:
+                f.write(chunk_data)
+                total_received += len(chunk_data)
+                # Cập nhật tiến trình Rich
+                task_id = progress_tasks[part_number]
+                progress.update(task_id, completed=total_received)
+            else:
+                print(f"Hash mismatch for part {part_number}, requesting retransmission")
+                sock.sendto(f"DOWNLOAD_REQUEST {filename} {offset + total_received} {length - total_received}".encode(), (SERVER_HOST, SERVER_PORT))
     sock.close()  # Đóng socket sau khi tải xong
 
-
-def display_progress(filename, num_parts):
-    """Hiển thị tiến trình tải."""
-    while any(progress < 100 for progress in progress_status.values()):
-        os.system('cls' if os.name == 'nt' else 'clear')  # Xóa màn hình
-        print(f"Downloading {filename}:")
-        for part in range(1, num_parts + 1):
-            progress = progress_status.get(part, 0)
-            print(f"Downloading {filename} part {part} .... {progress:.2f}%")
-        time.sleep(0.03)
 
 
 def download_file(filename, file_size):
     """Tải một file chia thành nhiều phần."""
-    global progress_status
     num_parts = 4  # Số phần chia
     chunk_length = file_size // num_parts
     threads = []
 
-    # Khởi tạo tiến trình hiển thị tiến trình tải
-    progress_status = {part: 0 for part in range(1, num_parts + 1)}
-    progress_thread = threading.Thread(target=display_progress, args=(filename, num_parts))
-    progress_thread.start()
+    # Khởi tạo tiến trình với Rich
+    with Progress(
+        TextColumn("[bold blue]{task.fields[filename]}", justify="right"),
+        BarColumn(),
+        "[progress.percentage]{task.percentage:>3.0f}%",
+        TimeRemainingColumn(),
+    ) as progress:
+        # Tạo các thanh tiến trình
+        progress_tasks = {
+            part: progress.add_task(f"Downloading part {part}", filename=f"{filename} - part {part}", total=chunk_length)
+            for part in range(1, num_parts + 1)
+        }
 
-    # Khởi động các thread tải dữ liệu song song
-    for part in range(num_parts):
-        offset = part * chunk_length
-        length = chunk_length if part < num_parts - 1 else file_size - offset
-        thread = threading.Thread(target=download_chunk, args=(filename, offset, length, part + 1))
-        thread.start()
-        threads.append(thread)
+        # Khởi động các thread tải dữ liệu song song
+        for part in range(num_parts):
+            offset = part * chunk_length
+            length = chunk_length if part < num_parts - 1 else file_size - offset
+            thread = threading.Thread(
+                target=download_chunk, 
+                args=(filename, offset, length, part + 1, progress_tasks, progress)
+            )
+            thread.start()
+            threads.append(thread)
 
-    # Chờ tất cả các thread tải dữ liệu hoàn thành
-    for t in threads:
-        t.join()
-
-    progress_thread.join()  # Kết thúc tiến trình hiển thị
+        # Chờ tất cả các thread tải dữ liệu hoàn thành
+        for t in threads:
+            t.join()
 
     # Ghép các file part thành file hoàn chỉnh
     with open(filename, "wb") as final_file:
@@ -74,6 +78,7 @@ def download_file(filename, file_size):
             with open(part_filename, "rb") as part_file:
                 final_file.write(part_file.read())
             os.remove(part_filename)  # Xóa file part sau khi ghép
+
 
 
 def request_file_list():

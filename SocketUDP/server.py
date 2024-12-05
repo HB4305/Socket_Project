@@ -2,11 +2,12 @@ import socket
 import os
 import time
 import threading
+import hashlib
 
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 12345
 FILE_LIST_PATH = "files.txt"
-BYTE_SIZE = 4096  # 1 KB
+BYTE_SIZE = 4096 - 33  # Adjusted to account for hash size
 
 # Hàm đọc danh sách file từ file text
 def load_file_list():
@@ -43,7 +44,9 @@ def handle_download_request(client_address, filename, offset, length):
                 while length > 0:
                     chunk_size = min(BYTE_SIZE, length)
                     data = f.read(chunk_size)
-                    server_socket.sendto(data, client_address)
+                    hash_value = hashlib.md5(data).hexdigest()
+                    packet = hash_value.encode() + b" " + data
+                    server_socket.sendto(packet, client_address)
                     length -= chunk_size
                     time.sleep(0.01)  # Add a small delay
                 server_socket.sendto(b"End", client_address)
@@ -67,7 +70,7 @@ while True:
             print(f"Connection established with {client_address}")
 
         # Chấp nhận yêu cầu từ client hiện tại (bất kể socket nào của nó)
-        if current_client[0] == client_address[0]:  # Kiểm tra IP của client
+        if current_client[0] == client_address[0]: # Kiểm tra IP của client
             command = data.decode().split()
 
             if command[0] == "LIST_FILES":
