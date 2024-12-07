@@ -99,22 +99,25 @@ def monitor_input():
     processed_files = set()
     file_list = request_file_list()
     display_file_list(file_list)
-    while True:
-        with open("input.txt", "r") as f:
-            files_to_download = set(line.strip() for line in f if line.strip())
-            new_files = files_to_download - processed_files
-        for filename in new_files:
-            file_map = {line.split()[0]: int(line.split()[1].replace("MB", "")) * 1024 * 1024 for line in file_list}
-            if filename in file_map:
-                print(f"Starting download of {filename}")
-                download_file(filename, file_map[filename])
-                print(f"Completed download of {filename}")
-            else:
-                print(f"File {filename} not found on server")
-            processed_files.add(filename)
-            file_list = request_file_list()
-            display_file_list(file_list)
-        time.sleep(5)
+    try:
+        while True:
+            with open("input.txt", "r") as f:
+                files_to_download = set(line.strip() for line in f if line.strip())
+                new_files = files_to_download - processed_files
+            for filename in new_files:
+                file_map = {line.split()[0]: int(line.split()[1].replace("MB", "")) * 1024 * 1024 for line in file_list}
+                if filename in file_map:
+                    print(f"Starting download of {filename}")
+                    download_file(filename, file_map[filename])
+                    print(f"Completed download of {filename}")
+                else:
+                    print(f"File {filename} not found on server")
+                processed_files.add(filename)
+                file_list = request_file_list()
+                display_file_list(file_list)
+            time.sleep(5)
+    except KeyboardInterrupt:
+        print("Exiting monitor")
 
 
 if __name__ == "__main__":

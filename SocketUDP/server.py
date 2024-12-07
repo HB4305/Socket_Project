@@ -64,22 +64,17 @@ while True:
     try:
         # Nhận dữ liệu từ client
         data, client_address = server_socket.recvfrom(1024)
-        # Nếu client mới kết nối và server chưa có client
-        if current_client is None:
-            current_client = client_address
-            print(f"Connection established with {client_address}")
+        print(f"Received request from {client_address}")
+        command = data.decode().split()
+        
 
-        # Chấp nhận yêu cầu từ client hiện tại (bất kể socket nào của nó)
-        if current_client[0] == client_address[0]: # Kiểm tra IP của client
-            command = data.decode().split()
+        if command[0] == "LIST_FILES":
+            handle_list_files_request(client_address)
 
-            if command[0] == "LIST_FILES":
-                handle_list_files_request(client_address)
-
-            elif command[0] == "DOWNLOAD_REQUEST":
-                filename, offset, length = command[1], int(command[2]), int(command[3])
-                download_thread = threading.Thread(target=handle_download_request, args=(client_address, filename, offset, length))
-                download_thread.start()
+        elif command[0] == "DOWNLOAD_REQUEST":
+            filename, offset, length = command[1], int(command[2]), int(command[3])
+            download_thread = threading.Thread(target=handle_download_request, args=(client_address, filename, offset, length))
+            download_thread.start()
 
     except Exception as e:
         print(f"Error: {e}")
