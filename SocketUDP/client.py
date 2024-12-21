@@ -82,6 +82,7 @@ def monitor_input():
                     display_file_list(file_list)
                 else:
                     print(f"File {filename} not found on server")
+                    display_file_list(file_list)
                 processed_files.add(filename)
                 
             time.sleep(5)
