@@ -1,7 +1,5 @@
 import socket
 import os
-import time
-import threading
 import hashlib
 
 SERVER_HOST = "127.0.0.1"
@@ -24,6 +22,16 @@ def load_file_list():
                 files[name] = int(size)
     return files
 
+def format_size(size):
+    if size >= 1024 * 1024 * 1024:
+        return f"{size / (1024 * 1024 * 1024):.1f}GB"
+    elif size >= 1024 * 1024:
+        return f"{size / (1024 * 1024):.1f}MB"
+    elif size >= 1024:
+        return f"{size / 1024:.1f}KB"
+    else:
+        return f"{size}B"
+
 # Load file list
 files = load_file_list()
 
@@ -33,49 +41,67 @@ server_socket.bind((SERVER_HOST, SERVER_PORT))
 
 print(f"Server is listening on port {SERVER_PORT}...")
 
-current_client = None  # Lưu client hiện tại đang được phục vụ
-
-def handle_download_request(client_address, filename, offset, length):
+def handle_download_request(client_address, filename):
     if filename in files:
         file_path = os.path.join("source", filename)
+        if not os.path.exists(file_path):
+            server_socket.sendto(b"Error: File not found", client_address)
+            return
+
         try:
+            length = os.path.getsize(file_path)
             with open(file_path, "rb") as f:
-                f.seek(offset)
+                seq = 0  # Sequence number bắt đầu từ 0
                 while length > 0:
-                    chunk_size = min(BYTE_SIZE, length)
-                    data = f.read(chunk_size)
+                    data = f.read(min(BYTE_SIZE, length))
                     hash_value = hashlib.md5(data).hexdigest()
-                    packet = hash_value.encode() + b" " + data
+                    packet = f"{seq:08d}".encode() + b" " + hash_value.encode() + b" " + data
                     server_socket.sendto(packet, client_address)
-                    length -= chunk_size
-                    time.sleep(0.01)  # Add a small delay
-                server_socket.sendto(b"End", client_address)
+                    # Wait for ACK or NACK
+                    while True:
+                        server_socket.settimeout(0.01)  # Timeout để chờ ACK hoặc NACK
+                        try:
+                            ack, _ = server_socket.recvfrom(1024)
+                            ack_message = ack.decode()
+                            if ack_message == f"ACK {seq}":
+                                seq += 1  # Chỉ tăng seq nếu nhận được ACK đúng
+                                length -= len(data)
+                                break
+                            elif ack_message == f"NACK {seq}":
+                                server_socket.sendto(packet, client_address)  # Resend nếu nhận được NACK
+                        except socket.timeout:
+                            print(f"Lost packet {seq}, resending...")
+                            server_socket.sendto(packet, client_address)  # Resend nếu không có ACK/NACK
+                
+            server_socket.sendto(b"End", client_address)
         except ConnectionResetError as e:
             print(f"Error sending file data: {e}")
+    else:
+        server_socket.sendto(b"Error: File not found", client_address)
 
 def handle_list_files_request(client_address):
-    response = "\n".join([f"{name} {size // (1024 * 1024)}MB" for name, size in files.items()])
+    response = "\n".join([f"{name} {format_size(size)}" for name, size in files.items()])
     try:
         server_socket.sendto(response.encode(), client_address)
     except ConnectionResetError as e:
         print(f"Error sending LIST_FILES response: {e}")
+def main_server():
+    while True:
+        try:
+            # Nhận dữ liệu từ client
+            data, client_address = server_socket.recvfrom(1024)
+            print(f"Received request from {client_address}")
+            command = data.decode().split()
+            
+            if command[0] == "LIST_FILES":
+                handle_list_files_request(client_address)
 
-while True:
-    try:
-        # Nhận dữ liệu từ client
-        data, client_address = server_socket.recvfrom(1024)
-        print(f"Received request from {client_address}")
-        command = data.decode().split()
-        
+            elif command[0] == "DOWNLOAD_REQUEST":
+                filename = command[1]
+                handle_download_request(client_address, filename)
 
-        if command[0] == "LIST_FILES":
-            handle_list_files_request(client_address)
+        except Exception as e:
+            continue
 
-        elif command[0] == "DOWNLOAD_REQUEST":
-            filename, offset, length = command[1], int(command[2]), int(command[3])
-            download_thread = threading.Thread(target=handle_download_request, args=(client_address, filename, offset, length))
-            download_thread.start()
-
-    except Exception as e:
-        print(f"Error: {e}")
-
+if __name__ == "__main__":
+    main_server()
