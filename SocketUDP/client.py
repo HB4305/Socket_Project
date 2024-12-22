@@ -10,36 +10,49 @@ CHUNK_SIZE = 4096 - 33  # Adjusted to account for hash size
 
 def print_progress_bar(iteration, total, length=50):
     percent = 100 * (iteration / float(total)) 
-    percent = min(100, percent)
+    percent = min(percent, 100) 
     filled_length = int(length * iteration // total)
     bar = '#' * filled_length + '-' * (length - filled_length)
     sys.stdout.write(f'\r|{bar}| {percent:.1f}% Complete')
     sys.stdout.flush()
 
-def download_file(filename, file_size):
-    """Tải toàn bộ file mà không cần chia thành phần nhỏ."""
+def download_file(file_name, file_size):
+    """Tải file với giới hạn kích thước yêu cầu."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.sendto(f"DOWNLOAD_REQUEST {filename}".encode(), (SERVER_HOST, SERVER_PORT))
-    with open(filename, "wb") as f:
+    sock.sendto(f"DOWNLOAD_REQUEST {file_name} {file_size}".encode(), (SERVER_HOST, SERVER_PORT))
+    length, _ = sock.recvfrom(4096)  # Nhận kích thước file từ server
+    length = int(length.decode())
+    src_hash, _ = sock.recvfrom(4096)  # Nhận hash của file từ server
+    src_hash = src_hash.decode()
+    with open(file_name, "wb") as f:
         total_received = 0  # Tổng số byte đã nhận
         expected_seq = 0  # Sequence number bắt đầu từ 0
         while True:
-            data, _ = sock.recvfrom(CHUNK_SIZE + 42)  # 42 byte là 8 byte cho sequence number, 1 byte cho khoảng trắng, và 33 byte cho hash value
+            data, _ = sock.recvfrom(CHUNK_SIZE + 42)
             if data == b"End":
                 break
 
-            seq = int(data[:8])
+            seq = int(data[:8].decode().strip())
             hash_value, chunk_data = data[9:41], data[42:]
-            if seq == expected_seq and hashlib.md5(chunk_data).hexdigest().encode() == hash_value:
+            if seq == expected_seq and hashlib.md5(chunk_data).hexdigest() == hash_value.decode():
                 f.write(chunk_data)
                 total_received += len(chunk_data)
-                print_progress_bar(total_received, file_size)
+                print_progress_bar(total_received, length)
                 sock.sendto(f"ACK {seq}".encode(), (SERVER_HOST, SERVER_PORT))  # Gửi ACK cho server
                 expected_seq += 1
             else:
                 sock.sendto(f"NACK {expected_seq}".encode(), (SERVER_HOST, SERVER_PORT))  # Gửi NACK cho server
-    sock.close()  # Đóng socket sau khi tải xong
-    print()  # In dòng mới để kết thúc progress bar
+    sock.close()
+    print()
+
+    # Verify the file hash
+    with open(file_name, "rb") as f:
+        des_hash = hashlib.md5(f.read()).hexdigest()
+    if des_hash == src_hash:
+        print(f"File {file_name} downloaded successfully and verified.")
+    else:
+        print(f"File {file_name} downloaded failed. Retrying...")
+        download_file(file_name, file_size)
 
 def request_file_list():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -73,17 +86,16 @@ def monitor_input():
             with open("input.txt", "r") as f:
                 files_to_download = set(line.strip() for line in f if line.strip())
                 new_files = files_to_download - processed_files
-            for filename in new_files:
+            for file_name in new_files:
                 file_map = {file.split()[0]: parse_size(file.split()[1]) for file in file_list}
-                if filename in file_map:
-                    print(f"Starting download of {filename}")
-                    download_file(filename, file_map[filename])
-                    print(f"Download of {filename} complete")
+                if file_name in file_map:
+                    print(f"Starting download of {file_name}")
+                    download_file(file_name, file_map[file_name])
                     display_file_list(file_list)
                 else:
-                    print(f"File {filename} not found on server")
+                    print(f"File {file_name} not found on server")
                     display_file_list(file_list)
-                processed_files.add(filename)
+                processed_files.add(file_name)
                 
             time.sleep(5)
     except KeyboardInterrupt:
