@@ -99,7 +99,8 @@ def monitor_input():
                 
             time.sleep(5)
     except KeyboardInterrupt:
-        print("Exiting monitor")
+        print("Exit...")
+        exit(0)
 
 if __name__ == "__main__":
     monitor_input()
